@@ -1,12 +1,11 @@
 import bcrypt
-import jwt
 
 
-def hashpassword(password: str) -> str:
+def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
-def verifypassword(plainpassword: str, hashedpassword: str) -> bool:
-    return bcrypt.checkpw(plainpassword.encode(), hashedpassword.encode())
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
 
 

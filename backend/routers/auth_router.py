@@ -4,10 +4,11 @@ from fastapi.requests import Request
 from fastapi.responses import JSONResponse
 from db.client import get_db
 from repository.users import get_user_username, get_user_email
+from repository.tokens import add_access_and_refresh_tokens , update_access_and_expiry
 from schemas.users import UserInput,LoginInput
-from service.token import create_access_token , create_refresh_token
+from services.token import create_access_token, create_refresh_token, revalidate_access_token
 from db.models import Users
-from service.auth import hashpassword, verifypassword
+from services.auth import hash_password, verify_password
 import uuid
 
 
@@ -35,53 +36,76 @@ async def signup(request: UserInput, db=Depends(get_db)):
 
     
     try:
+        user_id = uuid.uuid4()
         user = Users(
-            id=uuid.uuid4(),
+            id=user_id,
             username=username,
-            password_hash=hashpassword(pass1),
+            password_hash=hash_password(pass1),
             display=display_name,
             email=email
         )
         db.add(user)
         await db.commit()
-        await db.refresh(user)  
-        
-        return JSONResponse({'status': 'success', 'user_id': str(user.id)}, status_code=201)
+
+        return JSONResponse({'status': 'success', 'user_id': str(user_id)}, status_code=201)
     except Exception as e:
         await db.rollback()
         return JSONResponse({'status': 'failed to create user'}, status_code=500)
 
 @auth_route.post("/api/auth/login")
-async def login(request: LoginInput, db=Depends(get_db)):
+async def login(request: LoginInput, req:Request, db=Depends(get_db)):
     email = request.email
     password = request.password
+
+    user_agent = req.headers.get("user-agent")
 
     user = await get_user_email(email, db)
     if not user:  
         return JSONResponse({"status": "email does not exist, please sign up"}, status_code=404)
 
-    if not verifypassword(password, user.password_hash):
+    if not verify_password(password, user.password_hash):
         return JSONResponse({"status": "incorrect password"}, status_code=401)
 
-    access_token = create_access_token(str(user.id))
-    refresh_token = create_refresh_token(str(user.id))
+    user_id = user.id 
+
+    access_token, access_expiry_time = create_access_token(str(user_id))
+    refresh_token, refresh_expiry_time = create_refresh_token(str(user_id))
+
+    await add_access_and_refresh_tokens(
+        db=db,
+        id=uuid.uuid4(),
+        user_id=user_id,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        access_token_expires_at=access_expiry_time,
+        refresh_token_expires_at=refresh_expiry_time,
+        device_info=user_agent,
+        is_revoked=False
+    )
+
     return JSONResponse({
         "status": "success",
         "access_token": access_token,
         "refresh_token": refresh_token,
-        "user_id": str(user.id)
+        "user_id": str(user_id)
     }, status_code=200)
 
 
-@auth_route.post("/api/auth/access_token")
-async def get_access_token(request:Request):
-    body = await request.json()
-    userid = body["userid"]
-    return create_access_token(userid)
 
 
-@auth_route.post("/api/auth/refresh_token")
-async def get_refresh_token(request:Request):
-    body = await request.json()
-    userid = body["userid"]
-    return create_refresh_token(userid)
+@auth_route.post("/api/auth/refresh_access_token")
+async def refresh_access_token(request: Request, db=Depends(get_db)):
+
+    refresh_token = request.cookies.get("refresh_token")
+    if not refresh_token:
+        return JSONResponse({"status": "refresh token missing"}, status_code=401)
+
+    result = revalidate_access_token(refresh_token)
+    if not result:
+        return JSONResponse({"status": "invalid or expired refresh token"}, status_code=401)
+
+    new_access_token, new_expiry_time, userid = result
+
+    await update_access_and_expiry(db, refresh_token, new_access_token, new_expiry_time)
+    return JSONResponse({'access_token':new_access_token})
+
