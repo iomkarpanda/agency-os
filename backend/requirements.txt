@@ -1,0 +1,12 @@
+alembic>=1.18
+authlib>=1.5
+bcrypt>=5.0
+fastapi>=0.136
+httpx>=0.28
+psycopg2-binary>=2.9
+pydantic>=2.12
+pydantic-settings>=2.14
+python-multipart>=0.0
+SQLAlchemy>=2.0
+uvicorn>=0.46
+asyncpg
